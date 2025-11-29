@@ -1,0 +1,57 @@
+name: ArduPilot build (fork)
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      BOARD: Pixhawk_2.4.8-bdshot           # <<--- REPLACE with your board name (e.g. Pixhawk1, CubeOrange, EchoPilotAI)
+      TARGET: copter                        # <<--- REPLACE with desired vehicle target: copter / plane / rover / sub / heli
+      WAF_PARALLEL: 2
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'             # ensure submodules (e.g. Tools) are pulled
+
+    - name: Install build prerequisites (ArduPilot recommended script)
+      run: |
+        sudo ./Tools/environment_install/install-prereqs-ubuntu.sh -y
+        # reload any profile changes for this shell
+        source ~/.profile || true
+
+    - name: Prepare python env (optional but helps)
+      run: |
+        python3 -m pip install --upgrade pip wheel
+        pip3 install --user empy
+
+    - name: Update submodules
+      run: git submodule update --init --recursive
+
+    - name: Configure waf for board
+      run: |
+        ./waf configure --board "${{ env.BOARD }}"
+
+    - name: Build firmware
+      run: |
+        # build selected vehicle target; waf target names: copter / plane / rover / sub / heli / all
+        ./waf ${{ env.TARGET }}
+
+    - name: Collect firmware artifacts
+      run: |
+        # binaries end up under build/<board>/bin/  (example: build/Pixhawk1/bin/)
+        ls -lah build/${{ env.BOARD }}/bin || true
+      continue-on-error: true
+
+    - name: Upload firmware artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ardupilot-firmware-${{ env.BOARD }}-${{ github.run_id }}
+        path: |
+          build/${{ env.BOARD }}/bin/**
