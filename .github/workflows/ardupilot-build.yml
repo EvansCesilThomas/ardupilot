@@ -2,56 +2,83 @@ name: ArduPilot build (fork)
 
 on:
   push:
-    branches: [ master ]
+    branches:
+      - master
   workflow_dispatch:
+  pull_request:
+    branches:
+      - master
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
+
     env:
-      DEBIAN_FRONTEND: noninteractive
-      BOARD: Pixhawk_2.4.8-bdshot           # <<--- REPLACE with your board name (e.g. Pixhawk1, CubeOrange, EchoPilotAI)
-      TARGET: copter                        # <<--- REPLACE with desired vehicle target: copter / plane / rover / sub / heli
-      WAF_PARALLEL: 2
+      BOARD: Pixhawk_2.4.8-bdshot      # <<< REPLACE with your board name (e.g. px4-v2, px4-v5, <your_board>)
+      TARGET: copter                   # <<< copter / plane / rover / sub / heli
 
     steps:
-    - name: Checkout repository
+    - name: Checkout repository (with submodules)
       uses: actions/checkout@v4
       with:
-        submodules: 'recursive'             # ensure submodules (e.g. Tools) are pulled
+        submodules: 'recursive'
+        fetch-depth: 0
 
-    - name: Install build prerequisites (ArduPilot recommended script)
+    - name: Print Git info
       run: |
+        git --no-pager log -n 5 --decorate --oneline
+        git status --porcelain --branch
+
+    - name: Set up Python and pip (user install)
+      run: |
+        python3 -m pip install --upgrade pip setuptools wheel
+        python3 -m pip install --user empy==3.3.4 future lxml pymavlink
+
+    - name: Run ArduPilot prereqs (do NOT use sudo)
+      run: |
+        chmod +x ./Tools/environment_install/install-prereqs-ubuntu.sh
         ./Tools/environment_install/install-prereqs-ubuntu.sh -y
-        # reload any profile changes for this shell
-        source ~/.profile || true
+      # NOTE: the script itself uses sudo internally; DO NOT prefix the script call with sudo.
 
-    - name: Prepare python env (optional but helps)
+    - name: Ensure empy available on PATH for waf
       run: |
-        python3 -m pip install --upgrade pip wheel
-        pip3 install --user empy
+        python3 -c "import empy; print('empy:', empy.__version__)"
+      continue-on-error: false
 
-    - name: Update submodules
+    - name: Update submodules (again)
       run: git submodule update --init --recursive
 
-    - name: Configure waf for board
+    - name: Configure waf for BOARD
       run: |
         ./waf configure --board "${{ env.BOARD }}"
+      env:
+        PATH: ${{ env.PATH }}:$HOME/.local/bin
 
-    - name: Build firmware
+    - name: Build firmware (${ { env.TARGET }})
       run: |
-        # build selected vehicle target; waf target names: copter / plane / rover / sub / heli / all
-        ./waf ${{ env.TARGET }}
+        ./waf ${TARGET} -j$(nproc)
+      env:
+        PATH: ${{ env.PATH }}:$HOME/.local/bin
 
-    - name: Collect firmware artifacts
+    - name: Show build directory contents
       run: |
-        # binaries end up under build/<board>/bin/  (example: build/Pixhawk1/bin/)
-        ls -lah build/${{ env.BOARD }}/bin || true
-      continue-on-error: true
+        echo "Listing build directory:"
+        ls -la build || true
+        echo "Listing board bin files:"
+        ls -la build/**/bin || true
 
-    - name: Upload firmware artifacts
+    - name: Upload firmware artifact (.apj/.elf)
       uses: actions/upload-artifact@v4
       with:
         name: ardupilot-firmware-${{ env.BOARD }}-${{ github.run_id }}
         path: |
-          build/${{ env.BOARD }}/bin/**
+          build/**/bin/*.apj
+          build/**/bin/*.elf
+          build/**/bin/*.hex
+
+    - name: Post-build log snippet
+      if: failure()
+      run: |
+        echo "Build failed — printing waf output (last 200 lines if available):"
+        tail -n 200 build/*/waf-*.log || true
