@@ -22,7 +22,7 @@ jobs:
 
     - name: Install build prerequisites (ArduPilot recommended script)
       run: |
-        sudo ./Tools/environment_install/install-prereqs-ubuntu.sh -y
+        ./Tools/environment_install/install-prereqs-ubuntu.sh -y
         # reload any profile changes for this shell
         source ~/.profile || true
 
